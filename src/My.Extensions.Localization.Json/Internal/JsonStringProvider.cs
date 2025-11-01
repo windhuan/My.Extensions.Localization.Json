@@ -5,8 +5,16 @@ using My.Extensions.Localization.Json.Caching;
 
 namespace My.Extensions.Localization.Json.Internal;
 
-public class JsonStringProvider(IResourceNamesCache resourceNamesCache, JsonResourceManager jsonResourceManager) : IResourceStringProvider
+public class JsonStringProvider : IResourceStringProvider
 {
+    IResourceNamesCache resourceNamesCache;
+    JsonResourceManager jsonResourceManager;
+
+    public JsonStringProvider(IResourceNamesCache resourceNamesCache, JsonResourceManager jsonResourceManager)
+    {
+        this.resourceNamesCache = resourceNamesCache;
+        this.jsonResourceManager = jsonResourceManager;
+    }
     private string GetResourceCacheKey(CultureInfo culture)
     {
         var resourceName = jsonResourceManager.ResourceName;

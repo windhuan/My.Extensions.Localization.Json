@@ -1,8 +1,11 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace My.Extensions.Localization.Json.Internal;
 
@@ -10,13 +13,17 @@ public class JsonResourceManager
 {
     private readonly JsonFileWatcher _jsonFileWatcher;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, string>> _resourcesCache = new();
-
-
-    public JsonResourceManager(string resourcesPath, string resourceName = null)
+    private readonly object _debounceLock = new();
+    private CancellationTokenSource _debounce_cts = null;
+    public JsonResourceManager(string resourcesPath, string resourceName = null, bool autoCreateMissingKey = false)
     {
         ResourcesPath = resourcesPath;
         ResourceName = resourceName;
-        
+        AutoCreateMissingKey = autoCreateMissingKey;
+        if (!System.IO.Directory.Exists(resourcesPath))
+        {
+            System.IO.Directory.CreateDirectory(resourcesPath);
+        }
         _jsonFileWatcher = new(resourcesPath);
         _jsonFileWatcher.Changed += RefreshResourcesCache;
     }
@@ -27,14 +34,28 @@ public class JsonResourceManager
 
     public string ResourcesFilePath { get; private set; }
 
+    public bool AutoCreateMissingKey { get; set; }
+
+
     public virtual ConcurrentDictionary<string, string> GetResourceSet(CultureInfo culture, bool tryParents)
     {
         TryLoadResourceSet(culture);
 
         var key = $"{ResourceName}.{culture.Name}";
-        if (!_resourcesCache.ContainsKey(key))
+
+        if (!AutoCreateMissingKey)
         {
-            return null;
+            if (!_resourcesCache.ContainsKey(key))
+            {
+                return null;
+            }
+        }
+        else
+        {
+            _resourcesCache.GetOrAdd(key, (key) =>
+            {
+                return new ConcurrentDictionary<string, string>();
+            });
         }
 
         if (tryParents)
@@ -65,7 +86,16 @@ public class JsonResourceManager
 
     public virtual string GetString(string name)
     {
-        var culture = CultureInfo.CurrentUICulture;
+        return GetString(name, CultureInfo.CurrentUICulture, tryParents: true);
+    }
+
+    public virtual string GetString(string name, CultureInfo culture, bool tryParents = false)
+    {
+        if (string.IsNullOrEmpty(culture.Name))
+        {
+            culture = new CultureInfo("zh-CN");
+        }
+        var original_key = $"{ResourceName}.{culture.Name}";
         GetResourceSet(culture, tryParents: true);
 
         if (_resourcesCache.IsEmpty)
@@ -83,31 +113,32 @@ public class JsonResourceManager
                     return value.ToString();
                 }
             }
-
             culture = culture.Parent;
-        } while (culture != culture.Parent);
+        } while (tryParents && culture != culture.Parent);
 
+        if (AutoCreateMissingKey)
+        {
+            if (_resourcesCache.TryGetValue(original_key, out var dict))
+            {
+                return dict.GetOrAdd(name, (n) =>
+                {
+                    Debounce(1000, () =>
+                    {
+                        var filePath = Path.Combine(ResourcesPath, original_key + ".json");
+                        _jsonFileWatcher.Changed -= RefreshResourcesCache;
+                        string jsonStr = System.Text.Json.JsonSerializer.Serialize(dict, options: new System.Text.Json.JsonSerializerOptions()
+                        {
+                            WriteIndented = true,
+                            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                        });
+                        File.WriteAllText(filePath, jsonStr);
+                        _jsonFileWatcher.Changed += RefreshResourcesCache;
+                    });
+                    return name;
+                });
+            }
+        }
         return null;
-    }
-
-    public virtual string GetString(string name, CultureInfo culture)
-    {
-        GetResourceSet(culture, tryParents: true);
-
-        if (_resourcesCache.IsEmpty)
-        {
-            return null;
-        }
-
-        var key = $"{ResourceName}.{culture.Name}";
-        if (!_resourcesCache.TryGetValue(key, out var resources))
-        {
-            return null;
-        }
-
-        return resources.TryGetValue(name, out var value)
-            ? value.ToString()
-            : null;
     }
 
     private void TryLoadResourceSet(CultureInfo culture)
@@ -158,7 +189,7 @@ public class JsonResourceManager
 
             return Directory.Exists(resourcesPath)
                 ? Directory.EnumerateFiles(resourcesPath, $"{resourceName}.{culture}*.json")
-                : [];
+                : new string[0];
         }
 
         void TryAddResources(string resourceFile)
@@ -189,6 +220,29 @@ public class JsonResourceManager
                     _resourcesCache[key].TryAdd(item.Key, item.Value);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// 延迟执行指定操作，若在延迟期间再次调用则重置延迟。
+    /// </summary>
+    /// <param name="delay">延迟时间（毫秒）</param>
+    /// <param name="action">要执行的操作</param>
+    public void Debounce(int delay, Action action)
+    {
+        lock (_debounceLock)
+        {
+            _debounce_cts?.Cancel();
+            _debounce_cts = new CancellationTokenSource();
+            var token = _debounce_cts.Token;
+
+            Task.Delay(delay, token).ContinueWith(t =>
+            {
+                if (!t.IsCanceled)
+                {
+                    action();
+                }
+            }, TaskScheduler.Default);
         }
     }
 }

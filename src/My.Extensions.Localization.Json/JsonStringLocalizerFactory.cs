@@ -19,13 +19,13 @@ public class JsonStringLocalizerFactory : IStringLocalizerFactory
     private readonly string _resourcesRelativePath;
     private readonly ResourcesType _resourcesType = ResourcesType.TypeBased;
     private readonly ILoggerFactory _loggerFactory;
-
+    private IOptions<JsonLocalizationOptions> options;
     public JsonStringLocalizerFactory(
         IOptions<JsonLocalizationOptions> localizationOptions,
         ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(localizationOptions);
-
+        options = localizationOptions;
         _resourcesRelativePath = localizationOptions.Value.ResourcesPath ?? string.Empty;
         _resourcesType = localizationOptions.Value.ResourcesType;
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
@@ -91,8 +91,8 @@ public class JsonStringLocalizerFactory : IStringLocalizerFactory
         string resourceName)
     {
         var resourceManager = _resourcesType == ResourcesType.TypeBased
-            ? new JsonResourceManager(resourcesPath, resourceName)
-            : new JsonResourceManager(resourcesPath);
+            ? new JsonResourceManager(resourcesPath, resourceName, options.Value.AutoCreateMissingKey)
+            : new JsonResourceManager(resourcesPath,autoCreateMissingKey: options.Value.AutoCreateMissingKey);
         var logger = _loggerFactory.CreateLogger<JsonStringLocalizer>();
 
         return new JsonStringLocalizer(resourceManager, _resourceNamesCache, logger);
