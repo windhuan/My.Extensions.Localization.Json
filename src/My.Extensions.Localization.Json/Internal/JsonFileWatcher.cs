@@ -21,7 +21,17 @@ public class JsonFileWatcher : IDisposable
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
             EnableRaisingEvents = true
         };
-        _filesWatcher.Changed += (s, e) => Changed?.Invoke(s, e);
+        _filesWatcher.Changed += (s, e) =>
+        {
+            try
+            {
+                Changed?.Invoke(s, e);
+            }
+            catch
+            {
+
+            }
+        };
     }
 
     ~JsonFileWatcher()
