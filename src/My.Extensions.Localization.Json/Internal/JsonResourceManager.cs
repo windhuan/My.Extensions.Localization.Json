@@ -211,9 +211,9 @@ public class JsonResourceManager
         {
             if (!resources.IsEmpty)
             {
-                resources.Clear();
-
                 var freshResources = JsonResourceLoader.Load(e.FullPath);
+
+                resources.Clear();
 
                 foreach (var item in freshResources)
                 {
